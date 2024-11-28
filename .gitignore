@@ -30,3 +30,9 @@
 *.exe
 *.out
 *.app
+
+# exec
+model
+
+# archive
+xolesa00.zip
