@@ -24,5 +24,8 @@ $(TARGET): $(OBJS)
 %.o: %.cpp
 	$(CXX) $(CFLAGS) -c $< -o $@
 
+run: all
+	./$(TARGET)
+
 pack: clean
 	zip xolesa00.zip *.cpp *.h Makefile README.md
