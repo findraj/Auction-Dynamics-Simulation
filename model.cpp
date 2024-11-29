@@ -9,13 +9,14 @@
 #include <iostream>
 #include <ctime>
 #include "simlib.h"
+#include <cstdint>
 
 #define LOGGING true
 
 using std::string;
 
-const double NUMBER_OF_ITEMS = 200;                      // Number of auction items
-const double NUMBER_OF_BIDDERS = 100;                      // Number of bidders
+const double NUMBER_OF_ITEMS = 200;                       // Number of auction items
+const double NUMBER_OF_BIDDERS = 100;                     // Number of bidders
 double currentPrice = 5.0;                                // Current price of the auction
 double minimalIncrement() { return currentPrice * 0.05; } // Current increment of the auction TODO
 bool firstBidPlaced = false;                              // Flag if the first bid was placed for an item
@@ -48,7 +49,7 @@ void logSingleBid(double bidAmount)
             fprintf(logFile, "ItemNumber,ItemTime,BidAmount\n"); // Header
         }
 
-        double itemTime =  SINGLE_ITEM_DURATION - (ItemEndTime - Time);
+        double itemTime = SINGLE_ITEM_DURATION - (ItemEndTime - Time);
         printf("Item NUMBER: %d\n", itemNumber);
         printf("Item TIME: %.2f\n", itemTime);
         fprintf(logFile, "%d,%.1f,%.2f\n", itemNumber, itemTime, bidAmount);
