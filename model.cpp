@@ -7,18 +7,30 @@
  */
 
 #include <iostream>
+#include <ctime>
 #include "simlib.h"
 
-const double NUMBER_OF_ITEMS = 10;                       // Number of auction items
-const double NUMBER_OF_BIDDERS = 10;                     // Number of bidders
-double currentPrice = 5.0;                               // Current price of the auction
+using std::string;
+
+const double NUMBER_OF_ITEMS = 3460;                        // Number of auction items
+const double NUMBER_OF_BIDDERS = 10;                      // Number of bidders
+double currentPrice = 5.0;                                // Current price of the auction
 double minimalIncrement() { return currentPrice * 0.05; } // Current increment of the auction
-bool firstBidPlaced = false;                             // Flag if the first bid was placed for an item
-double SingleItemDuration = 60.0;                        // Duration of a single auction item
-double RealPrice = 10.0;                                 // Real price of the item
-double ItemEndTime = 0;                                  // End time of the current item
+bool firstBidPlaced = false;                              // Flag if the first bid was placed for an item
+double SingleItemDuration = 60.0;                         // Duration of a single auction item
+double RealPrice = 10.0;                                  // Real price of the item
+double ItemEndTime = 0;                                   // End time of the current item
+enum BidderType
+{
+    AGENT,
+    RATCHET,
+    SNIPER,
+    NONE = -1
+};
+int lastBidder = NONE; // Last bidder
 
 Facility biddingFacility; // Facility for bidding
+Histogram winners("Winners", -1, 1, 4);
 
 // Agent-bidding strategy
 // Really quickly bids higher than the current price by minimum increment
@@ -31,10 +43,9 @@ public:
     AgentBidder(double val) : valuation(val) {}
     void Behavior()
     {
-        // Priority = 3;
         while ((currentPrice < this->valuation) && !this->isLeading)
         {
-            Wait(Exponential(0.3));
+            Wait(Exponential(1.0)); // Increased waiting time
             if (((ItemEndTime - Time) < (SingleItemDuration / 3)))
             {
                 if (Time > ItemEndTime)
@@ -45,11 +56,21 @@ public:
 
                 if (currentPrice + minimalIncrement() < this->valuation)
                 {
-                    Seize(biddingFacility);
-                    currentPrice += minimalIncrement();
-                    Wait(Exponential(3));
-                    printf("[AGENT] bidder placed a bid. New price: %.2f\n", currentPrice);
-                    Release(biddingFacility);
+                    Wait(Exponential(0.2)); // Reaction time - or network latency in this case
+                    if (Random() < 0.68)
+                    {
+                        Seize(biddingFacility);
+                        // Check whether the price is still under the valuation
+                        if (currentPrice + minimalIncrement() < this->valuation)
+                        {
+                            firstBidPlaced = true;
+                            currentPrice += minimalIncrement();
+                            Wait(Exponential(1));
+                            printf("[AGENT] bidder placed a bid. New price: %.2f\n", currentPrice);
+                            lastBidder = AGENT;
+                        }
+                        Release(biddingFacility);
+                    }
                 }
                 else
                 {
@@ -74,7 +95,6 @@ public:
 
     void Behavior()
     {
-        // Priority = 1;
         while (currentPrice < this->valuation && !this->isLeading)
         {
             if (Time > ItemEndTime)
@@ -82,20 +102,27 @@ public:
                 Passivate();
             }
 
-            // Wait(Exponential(2));
-            // Place a bid if it's still within the valuation
+            Wait(Exponential(3)); // Reaction time
             if (currentPrice + minimalIncrement() <= valuation)
             {
-                Seize(biddingFacility);
-                currentPrice += minimalIncrement();
-                firstBidPlaced = true;
-                printf("[RATCHET] bidder placed a bid. New price: %.2f\n", currentPrice);
-                Wait(Exponential(3));
-                Release(biddingFacility);
+                Wait(Exponential(3)); // Reaction time
+                if (Random() < 0.26)
+                {
+                    Seize(biddingFacility);
+                    if (currentPrice + minimalIncrement() <= valuation)
+                    {
+                        firstBidPlaced = true;
+                        currentPrice += minimalIncrement();
+                        printf("[RATCHET] bidder placed a bid. New price: %.2f\n", currentPrice);
+                        Wait(Exponential(3));
+                        lastBidder = RATCHET;
+                    }
+                    Release(biddingFacility);
+                }
             }
             else
             {
-                break; // Stop bidding if the price exceeds the valuation
+                break;
             }
         }
     }
@@ -108,21 +135,20 @@ public:
 class SnipingBidder : public Process
 {
 public:
-    double valuation = 0;    // Max amount this bidder is willing to pay
-    double snipeDelay = 4.0; // Time before the end to place the bid
+    double valuation = 0;
+    double snipeDelay = 4.0;
 
     SnipingBidder(double val) : valuation(val) {}
 
     void Behavior()
     {
-        Priority = 2;
+        Priority = 2; // TODO
 
         if (Time > ItemEndTime)
         {
             Passivate();
         }
 
-        // Wait until just before the auction ends
         double snipeTime = Time + ItemEndTime - Exponential(snipeDelay);
         if (Time < snipeTime)
         {
@@ -134,15 +160,22 @@ public:
             Passivate();
         }
 
-        // Place the bid if it's within the bidder's valuation
         if (currentPrice + minimalIncrement() <= valuation)
         {
-            Seize(biddingFacility);
-            currentPrice += minimalIncrement();
-            firstBidPlaced = true;
-            printf("[SNIPER] placed a bid. New price: %.2f\n", currentPrice);
-            Wait(Exponential(0.2));
-            Release(biddingFacility);
+            Wait(Exponential(0.5)); // Reaction time
+            if (Random() < 0.03)
+            {
+                Seize(biddingFacility);
+                if (currentPrice + minimalIncrement() < this->valuation)
+                {
+                    currentPrice += minimalIncrement();
+                    firstBidPlaced = true;
+                    printf("[SNIPER] placed a bid. New price: %.2f\n", currentPrice);
+                    Wait(Exponential(0.2));
+                    lastBidder = SNIPER;
+                }
+                Release(biddingFacility);
+            }
         }
     }
 };
@@ -196,6 +229,7 @@ public:
         {
             printf("No bids were placed in the first 30 seconds, the item is discarded\n");
             id->Cancel();
+            winners(NONE);
         }
         Cancel();
     }
@@ -213,7 +247,11 @@ public:
         ItemEndTime = Time + SingleItemDuration;
 
         // Generate the value of the item
-        RealPrice = Exponential(1000 * Normal(0.5, 0.1));
+        RealPrice = Exponential(1000 * Normal(1.0, 0.2));
+        printf("Created item with value %.2f\n", RealPrice);
+
+        lastBidder = NONE;
+        printf("Resetting last bidder to %d\n", lastBidder);
 
         currentPrice = RealPrice * Normal(0.8, 0.2);
 
@@ -224,22 +262,25 @@ public:
         (new BidderGenerator)->Activate();
 
         // If there are no bidders in the first 30 seconds, the item is discarded
-        FirstBidTimeout *firstBidTimeout = new FirstBidTimeout(this, 30, &firstBidPlaced);
+        FirstBidTimeout *firstBidTimeout = new FirstBidTimeout(this, 30, &firstBidPlaced); // TODO: Pomocna fronta miesto boolu
 
-        // Auction loop
-        while (Time < ItemEndTime)
-        {
-            Passivate(); // Wait for bidders to place bids
-        }
+        printf("This auction will end at %.2f\n", ItemEndTime);
+        printf("Current time is %.2f\n", Time);
+        // Wait until the end of the auction
+        Wait(60);
+        printf("Auction ended\n");
 
         // If a bid was placed, the item is sold
         if (firstBidPlaced)
         {
             isSold = true;
             printf("Item sold at price %.2f\n", currentPrice);
+            printf("Winner: %d\n", lastBidder);
+            winners(lastBidder);
         }
         else
         {
+            // Should not happen, it is caught by the timeout
             printf("Item not sold (no bids)\n");
         }
         delete firstBidTimeout;
@@ -268,19 +309,26 @@ public:
             // }
 
             items_done++;
+            printf("Items done  %d\n", items_done);
 
             // Wait for the next auction
-            Wait(Exponential(10));
+            Wait(90);
 
-            delete item;
+            // If the item was not deleted by the timeout, cancel it
         }
     }
 };
 
 int main()
 {
-    Init(0, 1000);
+    RandomSeed(time(NULL));
+    Init(0, 100 * NUMBER_OF_ITEMS);
     (new Auction)->Activate();
     Run();
-    // Create bidders
+
+    // Statistics
+    SetOutput("stats.out");
+    printf("Simulation finished\n");
+    biddingFacility.Output();
+    winners.Output();
 }
