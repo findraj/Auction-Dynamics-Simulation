@@ -10,16 +10,19 @@
 #include <ctime>
 #include "simlib.h"
 
+#define LOGGING true
+
 using std::string;
 
-const double NUMBER_OF_ITEMS = 1000;                      // Number of auction items
-const double NUMBER_OF_BIDDERS = 10;                      // Number of bidders
+const double NUMBER_OF_ITEMS = 200;                      // Number of auction items
+const double NUMBER_OF_BIDDERS = 100;                      // Number of bidders
 double currentPrice = 5.0;                                // Current price of the auction
 double minimalIncrement() { return currentPrice * 0.05; } // Current increment of the auction TODO
 bool firstBidPlaced = false;                              // Flag if the first bid was placed for an item
 const double SINGLE_ITEM_DURATION = 60.0;                 // Duration of a single auction item
 double RealPrice = 10.0;                                  // Real price of the item
 double ItemEndTime = 0;                                   // End time of the current item
+uint32_t itemNumber = 0;                                  // Statistics
 enum BidderType
 {
     AGENT,
@@ -33,6 +36,25 @@ Facility biddingFacility("Bidding process"); // Facility for bidding
 Facility runningAuction("Item auction");     // Facility for running the auction
 Histogram winners("Winners", -1, 1, 4);      // Histogram of winners
 
+void logSingleBid(double bidAmount)
+{
+    static bool header = false;
+    FILE *logFile = fopen("analysis/results/auction_detailed_log.csv", "a");
+    if (logFile)
+    {
+        if (!header)
+        {
+            header = true;
+            fprintf(logFile, "ItemNumber,ItemTime,BidAmount\n"); // Header
+        }
+
+        double itemTime =  SINGLE_ITEM_DURATION - (ItemEndTime - Time);
+        printf("Item NUMBER: %d\n", itemNumber);
+        printf("Item TIME: %.2f\n", itemTime);
+        fprintf(logFile, "%d,%.1f,%.2f\n", itemNumber, itemTime, bidAmount);
+        fclose(logFile);
+    }
+}
 // Agent-bidding strategy
 // Really quickly bids higher than the current price by minimum increment
 // If the current price is higher than the bidder's valuation, the bidder stops bidding
@@ -58,47 +80,42 @@ public:
 
             updatePatience();
 
-            if (((ItemEndTime - Time) < (SINGLE_ITEM_DURATION / 3)) && !this->isLeading) // Bidding starts in the last third
+            if (currentPrice + minimalIncrement() < this->valuation && !biddingFacility.Busy())
             {
-                if (Time > ItemEndTime)
+                Seize(biddingFacility);
+                Wait(Exponential(0.05)); // Network latency
+                if (currentPrice + minimalIncrement() < this->valuation && this->patience > 0.1)
                 {
-                    printf("Deleting agent bidder with time: %.2f and item end time: %.2f\n", Time, ItemEndTime);
-                    Passivate();
-                }
-
-                if (currentPrice + minimalIncrement() < this->valuation && !biddingFacility.Busy())
-                {
-                    Seize(biddingFacility);
-                    Wait(Exponential(0.15));
-                    if (currentPrice + minimalIncrement() < this->valuation && this->patience > 0.1)
+                    if (Time > ItemEndTime)
                     {
-                        if (Time > ItemEndTime)
-                        {
-                            Release(biddingFacility);
-                            Passivate();
-                        }
-                        firstBidPlaced = true;
-                        currentPrice += minimalIncrement();
-                        printf("[AGENT] bidder placed a bid. New price: %.2f\n", currentPrice);
-                        lastBidder = AGENT;
-
-                        // Decrease patience slightly with each bid
-                        this->patience -= Normal(0.05, 0.01);
+                        Release(biddingFacility);
+                        Passivate();
                     }
-                    Release(biddingFacility);
-                }
-                else
-                {
-                    // Small patience reduction for waiting without bidding
-                    this->patience -= Normal(0.01, 0.005);
-                }
+                    firstBidPlaced = true;
+                    currentPrice += minimalIncrement();
+                    if (LOGGING)
+                    {
+                        logSingleBid(currentPrice);
+                    }
+                    printf("[AGENT] bidder placed a bid. New price: %.2f\n", currentPrice);
+                    lastBidder = AGENT;
 
-                // Stop if patience is exhausted
-                if (this->patience <= 0)
-                {
-                    printf("[AGENT] bidder ran out of patience and stopped bidding.\n");
-                    Passivate();
+                    // Decrease patience slightly with each bid
+                    this->patience -= Normal(0.05, 0.01);
                 }
+                Release(biddingFacility);
+            }
+            else
+            {
+                // Small patience reduction for waiting without bidding
+                this->patience -= Normal(0.01, 0.005);
+            }
+
+            // Stop if patience is exhausted
+            if (this->patience <= 0)
+            {
+                printf("[AGENT] bidder ran out of patience and stopped bidding.\n");
+                Passivate();
             }
         }
     }
@@ -158,7 +175,7 @@ public:
             if (this->patience > 0.1 && currentPrice + minimalIncrement() <= valuation && !biddingFacility.Busy() && !this->isLeading)
             {
                 Seize(biddingFacility);
-                Wait(Exponential(0.25)); // Human reaction time
+                Wait(Exponential(0.5)); // Human reaction time + network latency
                 if (currentPrice + minimalIncrement() <= valuation)
                 {
                     if (Time > ItemEndTime)
@@ -168,9 +185,12 @@ public:
                     }
                     firstBidPlaced = true;
                     currentPrice += minimalIncrement();
+                    if (LOGGING)
+                    {
+                        logSingleBid(currentPrice);
+                    }
                     printf("[RATCHET] bidder placed a bid. New price: %.2f\n", currentPrice);
                     lastBidder = RATCHET;
-
                     this->patience += Normal(0.05, 0.0025);
                 }
                 Release(biddingFacility);
@@ -178,7 +198,7 @@ public:
             else
             {
                 // Reduce patience slightly when not bidding
-                this->patience -= Normal(0.01, 0.005);
+                this->patience -= Normal(0.03, 0.02 / 3);
             }
         }
         printf("[RATCHET] ran out of patience and stopped bidding.\n");
@@ -203,13 +223,12 @@ public:
 
 // Sniping strategy
 // Bids higher than the current price by minimum increment
-// If the current price is higher than the bidder's valuation, the bidder stops bidding
-// Sniping waits for the last moment to bid
+// Sniper wait for the very last moment to bid
 class SnipingBidder : public Process
 {
 public:
     double valuation = 0;
-    double snipeDelay = 0.5; // Trying to snipe in the last 0.5 seconds
+    double snipeDelay = 0.2; // Trying to snipe in the last 0.2 seconds
 
     SnipingBidder(double val) : valuation(val) {}
 
@@ -221,7 +240,7 @@ public:
             Passivate();
         }
 
-        double snipeTime = Time + ItemEndTime - Normal(snipeDelay, 0.5);
+        double snipeTime = Time + ItemEndTime - Normal(snipeDelay, (0.1 / 3)); // Latency errors
         if (Time < snipeTime)
         {
             Wait(snipeTime - Time);
@@ -231,7 +250,7 @@ public:
         {
             Seize(biddingFacility);
             printf("Sniping at time %.2f of %.2f\n", Time, ItemEndTime);
-            Wait(Exponential(0.2)); // Reaction time
+            Wait(Normal(0.3, (0.1 / 3))); // Reaction time + 3 sigma rule
             if (currentPrice + minimalIncrement() < this->valuation)
             {
                 if (Time > ItemEndTime)
@@ -242,6 +261,10 @@ public:
 
                 currentPrice += minimalIncrement();
                 firstBidPlaced = true;
+                if (LOGGING)
+                {
+                    logSingleBid(currentPrice);
+                }
                 printf("[SNIPER] placed a bid. New price: %.2f\n", currentPrice);
                 lastBidder = SNIPER;
             }
@@ -271,15 +294,15 @@ class BidderGenerator : public Event
             // Generate bidder with the given strategy
             if (probability < 0.4)
             {
-                (new AgentBidder(RealPrice * Normal(1.2, 0.3)))->Activate();
+                (new AgentBidder(RealPrice * Normal(1.2, 0.5 / 2)))->Activate(); // TODO: V dokumentacii povedat, ze nastavene podla toho, ze ebay v priemere 16 bids na aukciu
             }
             else if (probability < 0.65)
             {
-                (new RatchetBidder(RealPrice * Normal(1.2, 0.3)))->Activate();
+                (new RatchetBidder(RealPrice * Normal(1.2, 0.5 / 2)))->Activate();
             }
             else
             {
-                (new SnipingBidder(RealPrice * Normal(1.2, 0.3)))->Activate();
+                (new SnipingBidder(RealPrice * Normal(1.2, 0.5 / 2)))->Activate();
             }
         }
     }
@@ -321,6 +344,8 @@ public:
         Seize(runningAuction);
         // Generate bidders
         ItemEndTime = Time + SINGLE_ITEM_DURATION;
+
+        itemNumber++;
 
         // Generate the value of the item
         RealPrice = Exponential(1000 * Normal(1.0, 0.2));
@@ -367,17 +392,14 @@ public:
 class Auction : public Process
 {
 public:
-    int items_done = 0;
     void Behavior()
     {
-        while (items_done < NUMBER_OF_ITEMS)
+        while (itemNumber < NUMBER_OF_ITEMS)
         {
             printf("Auction started\n");
             // Create and activate an auction item
             AuctionItem *item = new AuctionItem();
             item->Activate();
-
-            items_done++;
 
             // Wait for the next auction
             Seize(runningAuction); // indicated the end of the auction for a single item
@@ -394,7 +416,7 @@ public:
 int main()
 {
     RandomSeed(time(NULL));
-    Init(0, (SINGLE_ITEM_DURATION + 10) * NUMBER_OF_ITEMS);
+    Init(0, (SINGLE_ITEM_DURATION * 2 + 10) * NUMBER_OF_ITEMS);
     (new Auction)->Activate();
     Run();
 

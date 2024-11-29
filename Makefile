@@ -25,6 +25,7 @@ $(TARGET): $(OBJS)
 	$(CXX) $(CFLAGS) -c $< -o $@
 
 run: all
+	rm -rf analysis/results/auction_detailed_log.csv
 	./$(TARGET)
 
 pack: clean
