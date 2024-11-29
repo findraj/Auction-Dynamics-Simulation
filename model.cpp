@@ -44,10 +44,10 @@ public:
     AgentBidder(double val) : valuation(val) {}
     void Behavior()
     {
-        while ((currentPrice < this->valuation) && !this->isLeading)
+        while (currentPrice < this->valuation)
         {
-            Wait(Exponential(1.0));                                  // Increased waiting time
-            if (((ItemEndTime - Time) < (SINGLE_ITEM_DURATION / 3))) // Agents start bidding in the last third of the auction
+            Wait(1);                                                                     // Increased waiting time
+            if (((ItemEndTime - Time) < (SINGLE_ITEM_DURATION / 3)) && !this->isLeading) // Agents start bidding in the last third of the auction
             {
                 if (Time > ItemEndTime)
                 {
@@ -55,27 +55,23 @@ public:
                     Passivate();
                 }
 
-                if (currentPrice + minimalIncrement() < this->valuation)
+                if (currentPrice + minimalIncrement() < this->valuation && !biddingFacility.Busy())
                 {
-                    Wait(Exponential(0.2)); // Reaction time - or network latency in this case
-                    if (Random() < 0.68)
+                    Seize(biddingFacility);
+                    Wait(Exponential(0.15)); // Reaction time - or network latency in this case
+                    // Check whether the price is still under the valuation
+                    if (currentPrice + minimalIncrement() < this->valuation)
                     {
-                        Seize(biddingFacility);
-                        // Check whether the price is still under the valuation
-                        if (currentPrice + minimalIncrement() < this->valuation)
-                        {
-                            firstBidPlaced = true;
-                            currentPrice += minimalIncrement();
-                            Wait(Exponential(1));
-                            printf("[AGENT] bidder placed a bid. New price: %.2f\n", currentPrice);
-                            lastBidder = AGENT;
-                        }
-                        Release(biddingFacility);
+                        firstBidPlaced = true;
+                        currentPrice += minimalIncrement();
+                        printf("[AGENT] bidder placed a bid. New price: %.2f\n", currentPrice);
+                        lastBidder = AGENT;
                     }
+                    Release(biddingFacility);
                 }
                 else
                 {
-                    break;
+                    continue;
                 }
             }
         }
@@ -96,34 +92,32 @@ public:
 
     void Behavior()
     {
-        while (currentPrice < this->valuation && !this->isLeading)
+        while (currentPrice < this->valuation)
         {
+            Wait(1);
             if (Time > ItemEndTime)
             {
                 Passivate();
             }
 
-            Wait(Exponential(3)); // Reaction time
-            if (currentPrice + minimalIncrement() <= valuation)
+            if (((currentPrice + minimalIncrement()) <= valuation) && (!biddingFacility.Busy() && !this->isLeading))
             {
-                Wait(Exponential(3)); // Reaction time
-                if (Random() < 0.26)
+                Seize(biddingFacility);
+                Wait(Exponential(1)); // Reaction time
                 {
-                    Seize(biddingFacility);
                     if (currentPrice + minimalIncrement() <= valuation)
                     {
                         firstBidPlaced = true;
                         currentPrice += minimalIncrement();
                         printf("[RATCHET] bidder placed a bid. New price: %.2f\n", currentPrice);
-                        Wait(Exponential(3));
                         lastBidder = RATCHET;
                     }
-                    Release(biddingFacility);
                 }
+                Release(biddingFacility);
             }
             else
             {
-                break;
+                continue;
             }
         }
     }
@@ -145,6 +139,7 @@ public:
     {
         Priority = 2; // TODO
 
+    sniper:
         if (Time > ItemEndTime)
         {
             Passivate();
@@ -156,27 +151,22 @@ public:
             Wait(snipeTime - Time);
         }
 
-        if (Time > ItemEndTime)
+        if (currentPrice + minimalIncrement() <= valuation && !biddingFacility.Busy())
         {
-            Passivate();
-        }
-
-        if (currentPrice + minimalIncrement() <= valuation)
-        {
+            Seize(biddingFacility);
             Wait(Exponential(0.5)); // Reaction time
-            if (Random() < 0.03)
+            if (currentPrice + minimalIncrement() < this->valuation)
             {
-                Seize(biddingFacility);
-                if (currentPrice + minimalIncrement() < this->valuation)
-                {
-                    currentPrice += minimalIncrement();
-                    firstBidPlaced = true;
-                    printf("[SNIPER] placed a bid. New price: %.2f\n", currentPrice);
-                    Wait(Exponential(0.2));
-                    lastBidder = SNIPER;
-                }
-                Release(biddingFacility);
+                currentPrice += minimalIncrement();
+                firstBidPlaced = true;
+                printf("[SNIPER] placed a bid. New price: %.2f\n", currentPrice);
+                lastBidder = SNIPER;
             }
+            Release(biddingFacility);
+        }
+        else
+        {
+            goto sniper;
         }
     }
 };
