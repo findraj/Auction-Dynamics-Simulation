@@ -31,7 +31,7 @@ int lastBidder = NONE; // Last bidder
 
 Facility biddingFacility("Bidding process"); // Facility for bidding
 Facility runningAuction("Item auction");     // Facility for running the auction
-Histogram winners("Winners", -1, 1, 4);
+Histogram winners("Winners", -1, 1, 4);      // Histogram of winners
 
 // Agent-bidding strategy
 // Really quickly bids higher than the current price by minimum increment
@@ -41,13 +41,24 @@ class AgentBidder : public Process
 public:
     double valuation;
     bool isLeading = false;
+    double patience = 1.0; // Start with patience 1
     AgentBidder(double val) : valuation(val) {}
     void Behavior()
     {
-        while (currentPrice < this->valuation)
+        while (currentPrice < this->valuation && this->patience > 0) // Stop if patience runs out
         {
-            Wait(1);                                                                     // Increased waiting time
-            if (((ItemEndTime - Time) < (SINGLE_ITEM_DURATION / 3)) && !this->isLeading) // Agents start bidding in the last third of the auction
+            if (patience > 0)
+            {
+                Wait(this->patience);
+            }
+            else
+            {
+                Wait(0.05);
+            }
+
+            updatePatience();
+
+            if (((ItemEndTime - Time) < (SINGLE_ITEM_DURATION / 3)) && !this->isLeading) // Bidding starts in the last third
             {
                 if (Time > ItemEndTime)
                 {
@@ -58,22 +69,54 @@ public:
                 if (currentPrice + minimalIncrement() < this->valuation && !biddingFacility.Busy())
                 {
                     Seize(biddingFacility);
-                    Wait(Exponential(0.15)); // Reaction time - or network latency in this case
-                    // Check whether the price is still under the valuation
-                    if (currentPrice + minimalIncrement() < this->valuation)
+                    Wait(Exponential(0.15));
+                    if (currentPrice + minimalIncrement() < this->valuation && this->patience > 0.1)
                     {
+                        if (Time > ItemEndTime)
+                        {
+                            Release(biddingFacility);
+                            Passivate();
+                        }
                         firstBidPlaced = true;
                         currentPrice += minimalIncrement();
                         printf("[AGENT] bidder placed a bid. New price: %.2f\n", currentPrice);
                         lastBidder = AGENT;
+
+                        // Decrease patience slightly with each bid
+                        this->patience -= Normal(0.05, 0.01);
                     }
                     Release(biddingFacility);
                 }
                 else
                 {
-                    continue;
+                    // Small patience reduction for waiting without bidding
+                    this->patience -= Normal(0.01, 0.005);
+                }
+
+                // Stop if patience is exhausted
+                if (this->patience <= 0)
+                {
+                    printf("[AGENT] bidder ran out of patience and stopped bidding.\n");
+                    Passivate();
                 }
             }
+        }
+    }
+
+    void updatePatience()
+    {
+        double normalizedTime = (Time - ItemEndTime + SINGLE_ITEM_DURATION) / SINGLE_ITEM_DURATION; // Normalize time to [0, 1]
+
+        if (normalizedTime > 0.7)
+        {
+            // Decrease patience significantly near the end of the auction
+            this->patience *= Normal(0.8, 0.1);
+        }
+
+        // Additional reduction if the agent is not leading
+        if (!this->isLeading)
+        {
+            this->patience += Normal(0.02, 0.01);
         }
     }
 };
@@ -86,39 +129,74 @@ class RatchetBidder : public Process
 private:
     double valuation = 0;
     bool isLeading = false;
+    double patience = 1.0; // Start with patience 1
 
 public:
     RatchetBidder(double val) : valuation(val) {}
 
     void Behavior()
     {
-        while (currentPrice < this->valuation)
+        while (currentPrice < this->valuation && this->patience > 0.0)
         {
-            Wait(1);
+            updatePatience();
+
+            if (this->patience > 0)
+            {
+                Wait(this->patience);
+            }
+            else
+            {
+                Wait(0.1);
+            }
+
             if (Time > ItemEndTime)
             {
                 Passivate();
             }
 
-            if (((currentPrice + minimalIncrement()) <= valuation) && (!biddingFacility.Busy() && !this->isLeading))
+            // Check if they want to bid
+            if (this->patience > 0.1 && currentPrice + minimalIncrement() <= valuation && !biddingFacility.Busy() && !this->isLeading)
             {
                 Seize(biddingFacility);
-                Wait(Exponential(1)); // Reaction time
+                Wait(Exponential(0.25)); // Human reaction time
+                if (currentPrice + minimalIncrement() <= valuation)
                 {
-                    if (currentPrice + minimalIncrement() <= valuation)
+                    if (Time > ItemEndTime)
                     {
-                        firstBidPlaced = true;
-                        currentPrice += minimalIncrement();
-                        printf("[RATCHET] bidder placed a bid. New price: %.2f\n", currentPrice);
-                        lastBidder = RATCHET;
+                        Release(biddingFacility);
+                        Passivate();
                     }
+                    firstBidPlaced = true;
+                    currentPrice += minimalIncrement();
+                    printf("[RATCHET] bidder placed a bid. New price: %.2f\n", currentPrice);
+                    lastBidder = RATCHET;
+
+                    this->patience += Normal(0.05, 0.0025);
                 }
                 Release(biddingFacility);
             }
             else
             {
-                continue;
+                // Reduce patience slightly when not bidding
+                this->patience -= Normal(0.01, 0.005);
             }
+        }
+        printf("[RATCHET] ran out of patience and stopped bidding.\n");
+    }
+
+    void updatePatience()
+    {
+        double normalizedTime = (Time - (ItemEndTime - SINGLE_ITEM_DURATION)) / SINGLE_ITEM_DURATION; // Normalize time to [0, 1]
+
+        if (normalizedTime > 0.7)
+        {
+            this->patience *= Normal(0.6, 0.1); // Gradual decrease
+        }
+
+        // Additional reduction if the agent is not leading (discouraged over time)
+        if (!this->isLeading)
+        {
+            this->patience -= Normal(0.02, 0.01);
         }
     }
 };
@@ -131,21 +209,19 @@ class SnipingBidder : public Process
 {
 public:
     double valuation = 0;
-    double snipeDelay = 2.0;
+    double snipeDelay = 0.5; // Trying to snipe in the last 0.5 seconds
 
     SnipingBidder(double val) : valuation(val) {}
 
     void Behavior()
     {
-        Priority = 2; // TODO
-
     sniper:
         if (Time > ItemEndTime)
         {
             Passivate();
         }
 
-        double snipeTime = Time + ItemEndTime - Exponential(snipeDelay);
+        double snipeTime = Time + ItemEndTime - Normal(snipeDelay, 0.5);
         if (Time < snipeTime)
         {
             Wait(snipeTime - Time);
@@ -154,9 +230,16 @@ public:
         if (currentPrice + minimalIncrement() <= valuation && !biddingFacility.Busy())
         {
             Seize(biddingFacility);
-            Wait(Exponential(0.5)); // Reaction time
+            printf("Sniping at time %.2f of %.2f\n", Time, ItemEndTime);
+            Wait(Exponential(0.2)); // Reaction time
             if (currentPrice + minimalIncrement() < this->valuation)
             {
+                if (Time > ItemEndTime)
+                {
+                    Release(biddingFacility);
+                    Passivate();
+                }
+
                 currentPrice += minimalIncrement();
                 firstBidPlaced = true;
                 printf("[SNIPER] placed a bid. New price: %.2f\n", currentPrice);
