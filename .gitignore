@@ -36,3 +36,6 @@ model
 
 # archive
 xolesa00.zip
+
+# debug logs
+out.txt

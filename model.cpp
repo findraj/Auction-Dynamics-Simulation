@@ -16,8 +16,8 @@
 
 using std::string;
 
-const double NUMBER_OF_ITEMS = 200;                       // Number of auction items
-const double NUMBER_OF_BIDDERS = 100;                     // Number of bidders
+const double NUMBER_OF_ITEMS = 1000;                       // Number of auction items
+const double NUMBER_OF_BIDDERS = 50;                      // Number of bidders
 double currentPrice = 5.0;                                // Current price of the auction
 double minimalIncrement() { return currentPrice * 0.05; } // Current increment of the auction TODO
 bool firstBidPlaced = false;                              // Flag if the first bid was placed for an item
@@ -25,6 +25,8 @@ const double SINGLE_ITEM_DURATION = 60.0;                 // Duration of a singl
 double RealPrice = 10.0;                                  // Real price of the item
 double ItemEndTime = 0;                                   // End time of the current item
 uint32_t itemNumber = 0;                                  // Statistics
+bool roundEnded = false;                                  // Flag if the item has ended
+
 enum BidderType
 {
     AGENT,
@@ -47,12 +49,10 @@ void logSingleBid(double bidAmount)
         if (!header)
         {
             header = true;
-            fprintf(logFile, "ItemNumber,ItemTime,BidAmount\n"); // Header
+            fprintf(logFile, "ItemNumber,ItemTime,BidAmount,Patience\n"); // Header
         }
 
         double itemTime = SINGLE_ITEM_DURATION - (ItemEndTime - Time);
-        printf("Item NUMBER: %d\n", itemNumber);
-        printf("Item TIME: %.2f\n", itemTime);
         fprintf(logFile, "%d,%.1f,%.2f\n", itemNumber, itemTime, bidAmount);
         fclose(logFile);
     }
@@ -65,42 +65,39 @@ class AgentBidder : public Process
 private:
     double valuation;
     bool isLeading = false;
-    double patience = 1.0;              // Start with patience 1
-    double lastUpdateTime = 0;          // Last time updatePatience was called
-    const double UPDATE_INTERVAL = 100; // Minimum time interval between updates
+    double patience = 1.0;                                     // Start with patience 1
+    double lastUpdateTime = 0;                                 // Last time updatePatience was called
+    const double UPDATE_INTERVAL = SINGLE_ITEM_DURATION / 100; // Minimum time interval between updates
 
 public:
     AgentBidder(double val) : valuation(val) {}
 
     void Behavior()
     {
-        while (currentPrice < this->valuation && this->patience > 0) // Stop if patience runs out
+        while ((currentPrice < this->valuation) && (this->patience > Exponential(0.1))) // Stop if patience runs out
         {
             // Check if enough time has passed since the last update
-            if (Time - lastUpdateTime >= UPDATE_INTERVAL)
+            if ((Time - lastUpdateTime) >= UPDATE_INTERVAL)
             {
                 updatePatience();
                 lastUpdateTime = Time; // Update the timestamp
             }
 
-            if (patience > 0)
+            Wait(std::max(this->patience, 0.2));
+
+            if (Time > ItemEndTime)
             {
-                Wait(this->patience);
-            }
-            else
-            {
-                Wait(0.05);
+                Passivate();
             }
 
-            updatePatience();
-
+            // Agents do not engage in bidding in the early stages of the auction
             if (Time > (ItemEndTime - (Exponential(SINGLE_ITEM_DURATION / 2))))
             {
-                if (currentPrice + minimalIncrement() < this->valuation && !biddingFacility.Busy())
+                if ((Random() > this->patience) && ((currentPrice + minimalIncrement()) < this->valuation) && !biddingFacility.Busy())
                 {
                     Seize(biddingFacility);
                     Wait(Exponential(0.05)); // Network latency
-                    if (currentPrice + minimalIncrement() < this->valuation && this->patience > 0.1)
+                    if ((currentPrice + minimalIncrement()) < this->valuation)
                     {
                         if (Time > ItemEndTime)
                         {
@@ -117,40 +114,49 @@ public:
                         lastBidder = AGENT;
 
                         // Decrease patience slightly with each bid
-                        this->patience -= Normal(0.05, 0.01);
+                        this->patience += Normal(0.05, 0.01);
                     }
                     Release(biddingFacility);
                 }
                 else
                 {
                     // Small patience reduction for waiting without bidding
-                    this->patience -= Normal(0.01, 0.005);
+                    // this->patience -= Normal(0.01, 0.005);
                 }
             }
             // Stop if patience is exhausted
             if (this->patience <= 0)
             {
                 printf("[AGENT] bidder ran out of patience and stopped bidding.\n");
-                Passivate();
             }
         }
+        Passivate();
     }
 
     void updatePatience()
     {
-        printf("Updating patience at time %.2f\n", Time);
         // Normalize time to range [0, 1] over the auction's single item duration
-        double normalizedTime = (Time - ItemEndTime + SINGLE_ITEM_DURATION) / SINGLE_ITEM_DURATION;
+        double normalizedTime = (SINGLE_ITEM_DURATION - (ItemEndTime - Time)) / SINGLE_ITEM_DURATION;
 
-        // Smooth decay
-        this->patience = 1.0 - pow(normalizedTime / 5, 3); 
-
-        if (!this->isLeading)
+        if (normalizedTime < 0.75)
         {
-            this->patience -= Normal(0.01, 0.005);
-            if (this->patience < 0)
-                this->patience = 0;
+            this->patience = 1.0 - ((0.01 / 0.75) * normalizedTime);
         }
+        else
+        {
+            // Exponential decline for the remaining 0.2 over [0.75, 1.0]
+            double remainingTime = (normalizedTime - 0.75) / (1.0 - 0.75);                      // Normalize [0.9, 1.0] to [0, 1]
+            this->patience = 0.99 - 0.2 * pow(remainingTime, 5);                              // Start from 0.98 and drop exponentially
+            // printf("Normalized time: %.2f, patience %.2f\n", normalizedTime, this->patience); // TODO: REMOVE
+        }
+
+        // TODO: Remove ?
+        // if (!this->isLeading)
+        // {
+        //     this->patience += Normal(0.01, 0.005);
+        //     if (this->patience < 0)
+        //         this->patience = 0;
+        // }
     }
 };
 
@@ -162,24 +168,24 @@ class RatchetBidder : public Process
 private:
     double valuation = 0;
     bool isLeading = false;
-    double patience = 1.0;              // Start with patience 1
-    double lastUpdateTime = 0;          // Last time updatePatience was called
-    const double UPDATE_INTERVAL = 100; // Minimum time interval between updates
+    double patience = 1.0;                                     // Start with patience 1
+    double lastUpdateTime = 0;                                 // Last time updatePatience was called
+    const double UPDATE_INTERVAL = SINGLE_ITEM_DURATION / 100; // Minimum time interval between updates
 
 public:
     RatchetBidder(double val) : valuation(val) {}
 
     void Behavior()
     {
-        while (currentPrice < this->valuation && this->patience > 0.0)
+        while ((currentPrice < this->valuation) && (this->patience > Exponential(0.1)))
         {
-            if (Time - lastUpdateTime >= UPDATE_INTERVAL)
+            if ((Time - lastUpdateTime) >= UPDATE_INTERVAL)
             {
                 updatePatience();
                 lastUpdateTime = Time; // Update the timestamp
             }
 
-            Wait(0.1);
+            Wait(std::max(this->patience, 0.2));
 
             if (Time > ItemEndTime)
             {
@@ -187,7 +193,7 @@ public:
             }
 
             // Check if they want to bid
-            if (this->patience > 0.1 && currentPrice + minimalIncrement() <= valuation && !biddingFacility.Busy() && !this->isLeading)
+            if ((Random() > this->patience) && ((currentPrice + minimalIncrement()) <= valuation) && !biddingFacility.Busy() && !this->isLeading)
             {
                 Seize(biddingFacility);
                 Wait(Exponential(0.5)); // Human reaction time + network latency
@@ -206,34 +212,48 @@ public:
                     }
                     printf("[RATCHET] bidder placed a bid. New price: %.2f\n", currentPrice);
                     lastBidder = RATCHET;
-                    this->patience += Normal(0.05, 0.0025);
+                    this->patience += Normal(0.05, 0.01);
                 }
                 Release(biddingFacility);
             }
             else
             {
                 // Reduce patience slightly when not bidding
-                this->patience -= Normal(0.03, 0.02 / 3);
+                // this->patience -= Normal(0.03, 0.02 / 3);
             }
         }
-        printf("[RATCHET] ran out of patience and stopped bidding.\n");
+        if (this->patience <= 0)
+            printf("[RATCHET] ran out of patience and stopped bidding.\n");
+        Passivate();
     }
 
     void updatePatience()
     {
         // Normalize time to range [0, 1] over the auction's single item duration
-        double normalizedTime = (Time - ItemEndTime + SINGLE_ITEM_DURATION) / SINGLE_ITEM_DURATION;
+        double normalizedTime = (SINGLE_ITEM_DURATION - (ItemEndTime - Time)) / SINGLE_ITEM_DURATION;
 
         // Smooth decay
-        this->patience = 1.0 - pow(normalizedTime / 5, 3);
-
-        // Apply additional small adjustments if not leading
-        if (!this->isLeading)
+        if (normalizedTime < 0.75)
         {
-            this->patience -= Normal(0.01, 0.005);
-            if (this->patience < 0)
-                this->patience = 0; 
+
+            this->patience = 1.0 - ((0.01 / 0.75) * normalizedTime);
         }
+        else
+        {
+            // Exponential decline for the remaining 0.2 over [0.75, 1.0]
+            double remainingTime = (normalizedTime - 0.75) / (1.0 - 0.75);                      // Normalize [0.9, 1.0] to [0, 1]
+            this->patience = 0.99 - 0.2 * pow(remainingTime, 5);                              // Start from 0.98 and drop exponentially
+            // printf("Normalized time: %.2f, patience %.2f\n", normalizedTime, this->patience); // TODO: REMOVE
+        }
+
+        // TODO: Remove ?
+        // // Apply additional small adjustments if not leading
+        // if (!this->isLeading)
+        // {
+        //     this->patience -= Normal(0.01, 0.005);
+        //     if (this->patience < 0)
+        //         this->patience = 0;
+        // }
     }
 };
 
@@ -250,11 +270,6 @@ public:
 
     void Behavior()
     {
-    sniper:
-        if (Time > ItemEndTime)
-        {
-            Passivate();
-        }
 
         double snipeTime = Time + ItemEndTime - Normal(snipeDelay, (0.1 / 3)); // Latency errors
         if (Time < snipeTime)
@@ -262,10 +277,14 @@ public:
             Wait(snipeTime - Time);
         }
 
+        if (Time > ItemEndTime)
+        {
+            Passivate();
+        }
+
         if (currentPrice + minimalIncrement() <= valuation && !biddingFacility.Busy())
         {
             Seize(biddingFacility);
-            printf("Sniping at time %.2f of %.2f\n", Time, ItemEndTime);
             Wait(Normal(0.3, (0.1 / 3))); // Reaction time + 3 sigma rule
             if (currentPrice + minimalIncrement() < this->valuation)
             {
@@ -288,7 +307,7 @@ public:
         }
         else
         {
-            goto sniper;
+            Passivate();
         }
     }
 };
@@ -412,13 +431,14 @@ public:
     {
         while (itemNumber < NUMBER_OF_ITEMS)
         {
-            printf("Auction started\n");
+            Seize(runningAuction); // indicated the end of the auction for a single item
+            printf("AUCTION STARTED\n");
+
             // Create and activate an auction item
             AuctionItem *item = new AuctionItem();
             item->Activate();
 
             // Wait for the next auction
-            Seize(runningAuction); // indicated the end of the auction for a single item
 
             // Pause between items
             Wait(60);
