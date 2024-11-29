@@ -8,6 +8,7 @@
 
 #include <iostream>
 #include <ctime>
+#include <cmath>
 #include "simlib.h"
 #include <cstdint>
 
@@ -61,15 +62,27 @@ void logSingleBid(double bidAmount)
 // If the current price is higher than the bidder's valuation, the bidder stops bidding
 class AgentBidder : public Process
 {
-public:
+private:
     double valuation;
     bool isLeading = false;
-    double patience = 1.0; // Start with patience 1
+    double patience = 1.0;              // Start with patience 1
+    double lastUpdateTime = 0;          // Last time updatePatience was called
+    const double UPDATE_INTERVAL = 100; // Minimum time interval between updates
+
+public:
     AgentBidder(double val) : valuation(val) {}
+
     void Behavior()
     {
         while (currentPrice < this->valuation && this->patience > 0) // Stop if patience runs out
         {
+            // Check if enough time has passed since the last update
+            if (Time - lastUpdateTime >= UPDATE_INTERVAL)
+            {
+                updatePatience();
+                lastUpdateTime = Time; // Update the timestamp
+            }
+
             if (patience > 0)
             {
                 Wait(this->patience);
@@ -81,37 +94,39 @@ public:
 
             updatePatience();
 
-            if (currentPrice + minimalIncrement() < this->valuation && !biddingFacility.Busy())
+            if (Time > (ItemEndTime - (Exponential(SINGLE_ITEM_DURATION / 2))))
             {
-                Seize(biddingFacility);
-                Wait(Exponential(0.05)); // Network latency
-                if (currentPrice + minimalIncrement() < this->valuation && this->patience > 0.1)
+                if (currentPrice + minimalIncrement() < this->valuation && !biddingFacility.Busy())
                 {
-                    if (Time > ItemEndTime)
+                    Seize(biddingFacility);
+                    Wait(Exponential(0.05)); // Network latency
+                    if (currentPrice + minimalIncrement() < this->valuation && this->patience > 0.1)
                     {
-                        Release(biddingFacility);
-                        Passivate();
-                    }
-                    firstBidPlaced = true;
-                    currentPrice += minimalIncrement();
-                    if (LOGGING)
-                    {
-                        logSingleBid(currentPrice);
-                    }
-                    printf("[AGENT] bidder placed a bid. New price: %.2f\n", currentPrice);
-                    lastBidder = AGENT;
+                        if (Time > ItemEndTime)
+                        {
+                            Release(biddingFacility);
+                            Passivate();
+                        }
+                        firstBidPlaced = true;
+                        currentPrice += minimalIncrement();
+                        if (LOGGING)
+                        {
+                            logSingleBid(currentPrice);
+                        }
+                        printf("[AGENT] bidder placed a bid. New price: %.2f\n", currentPrice);
+                        lastBidder = AGENT;
 
-                    // Decrease patience slightly with each bid
-                    this->patience -= Normal(0.05, 0.01);
+                        // Decrease patience slightly with each bid
+                        this->patience -= Normal(0.05, 0.01);
+                    }
+                    Release(biddingFacility);
                 }
-                Release(biddingFacility);
+                else
+                {
+                    // Small patience reduction for waiting without bidding
+                    this->patience -= Normal(0.01, 0.005);
+                }
             }
-            else
-            {
-                // Small patience reduction for waiting without bidding
-                this->patience -= Normal(0.01, 0.005);
-            }
-
             // Stop if patience is exhausted
             if (this->patience <= 0)
             {
@@ -123,18 +138,18 @@ public:
 
     void updatePatience()
     {
-        double normalizedTime = (Time - ItemEndTime + SINGLE_ITEM_DURATION) / SINGLE_ITEM_DURATION; // Normalize time to [0, 1]
+        printf("Updating patience at time %.2f\n", Time);
+        // Normalize time to range [0, 1] over the auction's single item duration
+        double normalizedTime = (Time - ItemEndTime + SINGLE_ITEM_DURATION) / SINGLE_ITEM_DURATION;
 
-        if (normalizedTime > 0.7)
-        {
-            // Decrease patience significantly near the end of the auction
-            this->patience *= Normal(0.8, 0.1);
-        }
+        // Smooth decay
+        this->patience = 1.0 - pow(normalizedTime / 5, 3); 
 
-        // Additional reduction if the agent is not leading
         if (!this->isLeading)
         {
-            this->patience += Normal(0.02, 0.01);
+            this->patience -= Normal(0.01, 0.005);
+            if (this->patience < 0)
+                this->patience = 0;
         }
     }
 };
@@ -147,7 +162,9 @@ class RatchetBidder : public Process
 private:
     double valuation = 0;
     bool isLeading = false;
-    double patience = 1.0; // Start with patience 1
+    double patience = 1.0;              // Start with patience 1
+    double lastUpdateTime = 0;          // Last time updatePatience was called
+    const double UPDATE_INTERVAL = 100; // Minimum time interval between updates
 
 public:
     RatchetBidder(double val) : valuation(val) {}
@@ -156,16 +173,13 @@ public:
     {
         while (currentPrice < this->valuation && this->patience > 0.0)
         {
-            updatePatience();
+            if (Time - lastUpdateTime >= UPDATE_INTERVAL)
+            {
+                updatePatience();
+                lastUpdateTime = Time; // Update the timestamp
+            }
 
-            if (this->patience > 0)
-            {
-                Wait(this->patience);
-            }
-            else
-            {
-                Wait(0.1);
-            }
+            Wait(0.1);
 
             if (Time > ItemEndTime)
             {
@@ -207,17 +221,18 @@ public:
 
     void updatePatience()
     {
-        double normalizedTime = (Time - (ItemEndTime - SINGLE_ITEM_DURATION)) / SINGLE_ITEM_DURATION; // Normalize time to [0, 1]
+        // Normalize time to range [0, 1] over the auction's single item duration
+        double normalizedTime = (Time - ItemEndTime + SINGLE_ITEM_DURATION) / SINGLE_ITEM_DURATION;
 
-        if (normalizedTime > 0.7)
-        {
-            this->patience *= Normal(0.6, 0.1); // Gradual decrease
-        }
+        // Smooth decay
+        this->patience = 1.0 - pow(normalizedTime / 5, 3);
 
-        // Additional reduction if the agent is not leading (discouraged over time)
+        // Apply additional small adjustments if not leading
         if (!this->isLeading)
         {
-            this->patience -= Normal(0.02, 0.01);
+            this->patience -= Normal(0.01, 0.005);
+            if (this->patience < 0)
+                this->patience = 0; 
         }
     }
 };
