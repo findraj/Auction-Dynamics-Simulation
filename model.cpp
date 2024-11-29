@@ -16,7 +16,7 @@
 
 using std::string;
 
-const double NUMBER_OF_ITEMS = 1000;                       // Number of auction items
+const double NUMBER_OF_ITEMS = 1000;                      // Number of auction items
 const double NUMBER_OF_BIDDERS = 50;                      // Number of bidders
 double currentPrice = 5.0;                                // Current price of the auction
 double minimalIncrement() { return currentPrice * 0.05; } // Current increment of the auction TODO
