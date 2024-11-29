@@ -12,12 +12,12 @@
 
 using std::string;
 
-const double NUMBER_OF_ITEMS = 3460;                        // Number of auction items
+const double NUMBER_OF_ITEMS = 1000;                      // Number of auction items
 const double NUMBER_OF_BIDDERS = 10;                      // Number of bidders
 double currentPrice = 5.0;                                // Current price of the auction
-double minimalIncrement() { return currentPrice * 0.05; } // Current increment of the auction
+double minimalIncrement() { return currentPrice * 0.05; } // Current increment of the auction TODO
 bool firstBidPlaced = false;                              // Flag if the first bid was placed for an item
-double SingleItemDuration = 60.0;                         // Duration of a single auction item
+const double SINGLE_ITEM_DURATION = 60.0;                 // Duration of a single auction item
 double RealPrice = 10.0;                                  // Real price of the item
 double ItemEndTime = 0;                                   // End time of the current item
 enum BidderType
@@ -29,7 +29,8 @@ enum BidderType
 };
 int lastBidder = NONE; // Last bidder
 
-Facility biddingFacility; // Facility for bidding
+Facility biddingFacility("Bidding process"); // Facility for bidding
+Facility runningAuction("Item auction");     // Facility for running the auction
 Histogram winners("Winners", -1, 1, 4);
 
 // Agent-bidding strategy
@@ -45,8 +46,8 @@ public:
     {
         while ((currentPrice < this->valuation) && !this->isLeading)
         {
-            Wait(Exponential(1.0)); // Increased waiting time
-            if (((ItemEndTime - Time) < (SingleItemDuration / 3)))
+            Wait(Exponential(1.0));                                  // Increased waiting time
+            if (((ItemEndTime - Time) < (SINGLE_ITEM_DURATION / 3))) // Agents start bidding in the last third of the auction
             {
                 if (Time > ItemEndTime)
                 {
@@ -136,7 +137,7 @@ class SnipingBidder : public Process
 {
 public:
     double valuation = 0;
-    double snipeDelay = 4.0;
+    double snipeDelay = 2.0;
 
     SnipingBidder(double val) : valuation(val) {}
 
@@ -228,6 +229,7 @@ public:
         if (!*placed)
         {
             printf("No bids were placed in the first 30 seconds, the item is discarded\n");
+            id->Release(runningAuction);
             id->Cancel();
             winners(NONE);
         }
@@ -243,8 +245,9 @@ public:
     void Behavior()
     {
         Priority = 10;
+        Seize(runningAuction);
         // Generate bidders
-        ItemEndTime = Time + SingleItemDuration;
+        ItemEndTime = Time + SINGLE_ITEM_DURATION;
 
         // Generate the value of the item
         RealPrice = Exponential(1000 * Normal(1.0, 0.2));
@@ -256,7 +259,7 @@ public:
         currentPrice = RealPrice * Normal(0.8, 0.2);
 
         // Reset the current price
-        printf("Auction started for item valued at %.2f\n", RealPrice);
+        printf("Auction started for item valued at %.2f\n", currentPrice);
 
         // Create bidders
         (new BidderGenerator)->Activate();
@@ -267,7 +270,7 @@ public:
         printf("This auction will end at %.2f\n", ItemEndTime);
         printf("Current time is %.2f\n", Time);
         // Wait until the end of the auction
-        Wait(60);
+        Wait(SINGLE_ITEM_DURATION);
         printf("Auction ended\n");
 
         // If a bid was placed, the item is sold
@@ -284,6 +287,7 @@ public:
             printf("Item not sold (no bids)\n");
         }
         delete firstBidTimeout;
+        Release(runningAuction);
     }
 };
 
@@ -295,34 +299,29 @@ public:
     {
         while (items_done < NUMBER_OF_ITEMS)
         {
-
             printf("Auction started\n");
-            // Create an auction item
             // Create and activate an auction item
             AuctionItem *item = new AuctionItem();
             item->Activate();
 
-            // Wait for the auction item to finish
-            // while (!item->Idle())
-            // {
-            //     Passivate();
-            // }
-
             items_done++;
-            printf("Items done  %d\n", items_done);
 
             // Wait for the next auction
-            Wait(90);
+            Seize(runningAuction); // indicated the end of the auction for a single item
 
-            // If the item was not deleted by the timeout, cancel it
+            // Pause between items
+            Wait(60);
+
+            Release(runningAuction);
         }
+        printf("All items sold for today\n");
     }
 };
 
 int main()
 {
     RandomSeed(time(NULL));
-    Init(0, 100 * NUMBER_OF_ITEMS);
+    Init(0, (SINGLE_ITEM_DURATION + 10) * NUMBER_OF_ITEMS);
     (new Auction)->Activate();
     Run();
 
@@ -331,4 +330,5 @@ int main()
     printf("Simulation finished\n");
     biddingFacility.Output();
     winners.Output();
+    runningAuction.Output();
 }
