@@ -21,7 +21,7 @@ const double NUMBER_OF_BIDDERS = 10;                      // Number of bidders
 double currentPrice = 5.0;                                // Current price of the auction
 double minimalIncrement() { return currentPrice * 0.05; } // Current increment of the auction TODO
 bool firstBidPlaced = false;                              // Flag if the first bid was placed for an item
-const double SINGLE_ITEM_DURATION = 60.0;                 // Duration of a single auction item
+const double SINGLE_ITEM_DURATION = 60.0;                // Duration of a single auction item
 double ItemEndTime = 0;                                   // End time of the current item
 uint32_t itemNumber = 0;                                  // Statistics
 
@@ -124,6 +124,10 @@ public:
                     {
                         Terminate();
                     }
+                    // double normalizedTime = (SINGLE_ITEM_DURATION - (this->roundEndTime - Time)) / SINGLE_ITEM_DURATION; // TODO: REMOVE
+
+                    // printf("Normalized time: %.2f, patience %.2f\n", normalizedTime, this->patience); // TODO: REMOVE
+
                     AgentDecidedToBid.Insert(this);
                     // if (AgentBidsProcess->Idle())
                     // {
@@ -145,6 +149,7 @@ public:
     {
         // Normalize time to range [0, 1] over the auction's single item duration
         double normalizedTime = (SINGLE_ITEM_DURATION - (ItemEndTime - Time)) / SINGLE_ITEM_DURATION;
+        printf("Normalized time: %.2f, patience %.2f\n", normalizedTime, this->patience); // TODO: REMOVE
 
         if (normalizedTime < 0.75)
         {
@@ -250,6 +255,10 @@ public:
                 {
                     Terminate();
                 }
+                // double normalizedTime = (SINGLE_ITEM_DURATION - (this->roundEndTime - Time)) / SINGLE_ITEM_DURATION; // TODO: REMOVE
+
+                // printf("Normalized time: %.2f, patience %.2f\n", normalizedTime, this->patience); // TODO: REMOVE
+
                 RatchetDecidedToBid.Insert(this);
                 // if (RatchetBidsProcess->Idle())
                 // {
@@ -269,7 +278,6 @@ public:
     {
         // Normalize time to range [0, 1] over the auction's single item duration
         double normalizedTime = (SINGLE_ITEM_DURATION - (this->roundEndTime - Time)) / SINGLE_ITEM_DURATION;
-
         // Smooth decay
         if (normalizedTime < 0.75)
         {
@@ -412,6 +420,7 @@ public:
         int agents = 0;
         int ratchets = 0;
         int snipers = 0;
+        int roundBidders = max(Exponential(NUMBER_OF_BIDDERS), 0.0);
         for (int i = 0; i < NUMBER_OF_BIDDERS; i++)
         {
             // Calculate probability of each strategy
@@ -554,7 +563,7 @@ public:
 
             returnFromQueues();
             // Pause between items
-            Wait(60);
+            Wait(SINGLE_ITEM_DURATION + 30);
 
             Release(runningAuction);
         }
@@ -565,7 +574,7 @@ public:
 int main()
 {
     RandomSeed(time(NULL));
-    Init(0, (SINGLE_ITEM_DURATION * 2 + 10) * NUMBER_OF_ITEMS);
+    Init(0, (SINGLE_ITEM_DURATION + 30) * NUMBER_OF_ITEMS); // Single item duration + 30 seconds between items
     (new Auction)->Activate();
     Run();
 
