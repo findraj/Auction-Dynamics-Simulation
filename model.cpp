@@ -11,21 +11,19 @@
 #include <cmath>
 #include "simlib.h"
 #include <cstdint>
+#include <vector>
+using namespace std;
 
 #define LOGGING true
 
-using std::string;
-
-const double NUMBER_OF_ITEMS = 1000;                       // Number of auction items
-const double NUMBER_OF_BIDDERS = 50;                      // Number of bidders
+const double NUMBER_OF_ITEMS = 1000;                      // Number of auction items
+const double NUMBER_OF_BIDDERS = 10;                      // Number of bidders
 double currentPrice = 5.0;                                // Current price of the auction
 double minimalIncrement() { return currentPrice * 0.05; } // Current increment of the auction TODO
 bool firstBidPlaced = false;                              // Flag if the first bid was placed for an item
 const double SINGLE_ITEM_DURATION = 60.0;                 // Duration of a single auction item
-// double RealPrice = 10.0;                                  // Real price of the item
-double ItemEndTime = 0;  // End time of the current item
-uint32_t itemNumber = 0; // Statistics
-bool roundEnded = false; // Flag if the item has ended
+double ItemEndTime = 0;                                   // End time of the current item
+uint32_t itemNumber = 0;                                  // Statistics
 
 enum BidderType
 {
@@ -34,7 +32,8 @@ enum BidderType
     SNIPER,
     NONE = -1
 };
-int lastBidder = NONE; // Last bidder
+
+int lastBidder = NONE; // Helper variable for histogram
 
 Facility biddingFacility("Bidding process"); // Facility for bidding
 Facility runningAuction("Item auction");     // Facility for running the auction
@@ -64,7 +63,7 @@ void logSingleBid(double bidAmount)
     }
 }
 
-void retrunFromQueues()
+void returnFromQueues()
 {
     while (!AgentDecidedToBid.Empty())
     {
@@ -91,14 +90,18 @@ private:
     double patience = 1.0;                                     // Start with patience 1
     double lastUpdateTime = 0;                                 // Last time updatePatience was called
     const double UPDATE_INTERVAL = SINGLE_ITEM_DURATION / 100; // Minimum time interval between updates
+    double roundEndTime = 0;
+    double aliveTime = 0;
 
 public:
-    AgentBidder(double val) : valuation(val) {}
+    AgentBidder(double val, double roundEndTime) : valuation(val)
+    {
+        this->roundEndTime = roundEndTime;
+    }
 
     void Behavior()
     {
-        // printf("[AGENT] bidder created with valuation %.2f\n", valuation);
-        while ((currentPrice < this->valuation) && (this->patience > Exponential(0.1)) && (Time < ItemEndTime))
+        while ((currentPrice < this->valuation) && (this->patience > Exponential(0.1)) && (Time < this->roundEndTime))
         {
             // Check if enough time has passed since the last update
             if ((Time - lastUpdateTime) >= UPDATE_INTERVAL)
@@ -108,19 +111,25 @@ public:
             }
 
             Wait(std::max(this->patience, 0.2));
-            // Wait(0.1);
+            aliveTime += std::max(this->patience, 0.2);
 
             // Agents do not engage in bidding in the early stages of the auction
-            if (Time > (ItemEndTime - (Exponential(SINGLE_ITEM_DURATION / 2))))
+            if (Time > (this->roundEndTime - (Exponential((SINGLE_ITEM_DURATION / 4) * 3))))
             {
                 if ((Random() > this->patience) && ((currentPrice + minimalIncrement()) < this->valuation))
                 {
+                    printf("[AGENT] bidder decided to bid with alive time %.2f\n", aliveTime);
                     Wait(0.5);
+                    if (Time >= this->roundEndTime)
+                    {
+                        Terminate();
+                    }
                     AgentDecidedToBid.Insert(this);
                     // if (AgentBidsProcess->Idle())
                     // {
                     //     AgentBidsProcess->Activate();
                     // }
+                    Passivate();
                 }
             }
             // Stop if patience is exhausted
@@ -139,7 +148,7 @@ public:
 
         if (normalizedTime < 0.75)
         {
-            this->patience = 1.0 - ((0.01 / 0.75) * normalizedTime);
+            this->patience = 1.0 - (Exponential(0.02) * normalizedTime);
         }
         else
         {
@@ -163,10 +172,14 @@ class AgentBids : public Process
 {
     void Behavior()
     {
-        Priority = 1;
         while (Time < ItemEndTime)
         {
             Wait(0.1);
+
+            if (Time >= ItemEndTime)
+            {
+                Passivate();
+            }
             if (!AgentDecidedToBid.Empty())
             {
                 if (!biddingFacility.Busy())
@@ -178,9 +191,9 @@ class AgentBids : public Process
                     {
                         logSingleBid(currentPrice);
                     }
-                    printf("[AGENT] bidder placed a bid. New price: %.2f\n", currentPrice);
+                    printf("[AGENT] bidder placed a bid at time: %.2f. New price: %.2f\n", Time, currentPrice);
                     lastBidder = AGENT;
-                    retrunFromQueues();
+                    returnFromQueues();
                     Release(biddingFacility);
                 }
             }
@@ -200,21 +213,24 @@ private:
     double patience = 1.0;                                     // Start with patience 1
     double lastUpdateTime = 0;                                 // Last time updatePatience was called
     const double UPDATE_INTERVAL = SINGLE_ITEM_DURATION / 100; // Minimum time interval between updates
+    double aliveTime = 0;
+    double roundEndTime = 0;
 
 public:
-    RatchetBidder(double val) : valuation(val)
+    RatchetBidder(double val, double roundEndTime) : valuation(val)
     {
-        // if (Random() < 0.05) // chance of the ratchet bidder to be irrational
-        // {
-        //     valuation = INFINITY;
-        // }
+        this->roundEndTime = roundEndTime;
+        if (Random() < 0.02)
+        {
+            this->valuation = INFINITY;
+        }
     }
 
     void Behavior()
     {
         // printf("[RATCHET] bidder created with valuation %.2f\n", valuation);
 
-        while ((currentPrice < this->valuation) && (this->patience > Exponential(0.1)) && (Time < ItemEndTime))
+        while ((currentPrice < this->valuation) && (this->patience > Exponential(0.1)) && (Time < this->roundEndTime))
         {
             if ((Time - lastUpdateTime) >= UPDATE_INTERVAL)
             {
@@ -223,17 +239,23 @@ public:
             }
 
             Wait(std::max(this->patience, 0.2));
-            // Wait(0.5);
+            aliveTime += std::max(this->patience, 0.2);
 
             // Check if they want to bid
             if ((Random() > this->patience) && ((currentPrice + minimalIncrement()) <= valuation))
             {
+                printf("[RATCHET] bidder decided to bid with alive time %.2f\n", aliveTime);
                 Wait(1);
+                if (Time >= this->roundEndTime)
+                {
+                    Terminate();
+                }
                 RatchetDecidedToBid.Insert(this);
                 // if (RatchetBidsProcess->Idle())
                 // {
                 //     RatchetBidsProcess->Activate();
                 // }
+                Passivate();
             }
         }
         if (this->patience <= 0)
@@ -246,13 +268,13 @@ public:
     void updatePatience()
     {
         // Normalize time to range [0, 1] over the auction's single item duration
-        double normalizedTime = (SINGLE_ITEM_DURATION - (ItemEndTime - Time)) / SINGLE_ITEM_DURATION;
+        double normalizedTime = (SINGLE_ITEM_DURATION - (this->roundEndTime - Time)) / SINGLE_ITEM_DURATION;
 
         // Smooth decay
         if (normalizedTime < 0.75)
         {
 
-            this->patience = 1.0 - ((0.01 / 0.75) * normalizedTime);
+            this->patience = 1.0 - (Exponential(0.02) * normalizedTime);
         }
         else
         {
@@ -270,6 +292,10 @@ class RatchetBids : public Process
         while (Time < ItemEndTime)
         {
             Wait(0.1);
+            if (Time >= ItemEndTime)
+            {
+                Passivate();
+            }
             if (!RatchetDecidedToBid.Empty())
             {
                 if (!biddingFacility.Busy())
@@ -281,9 +307,9 @@ class RatchetBids : public Process
                     {
                         logSingleBid(currentPrice);
                     }
-                    printf("[RATCHET] bidder placed a bid. New price: %.2f\n", currentPrice);
+                    printf("[RATCHET] bidder placed a bid at time: %.2f. New price: %.2f\n", Time, currentPrice);
                     lastBidder = RATCHET;
-                    retrunFromQueues();
+                    returnFromQueues();
                     Release(biddingFacility);
                 }
             }
@@ -299,8 +325,7 @@ class SnipingBidder : public Process
 {
 public:
     double valuation = 0;
-    double snipeDelay = 0.5;
-    bool isLeading = false;
+    double snipeDelay = Normal(0, 0.1 / 3);
     double roundEndTime = 0;
 
     SnipingBidder(double val, double roundEndTime) : valuation(val)
@@ -311,27 +336,25 @@ public:
     void Behavior()
     {
         // printf("[SNIPER] bidder created with valuation %.2f\n", valuation);
-        double snipeTime = this->roundEndTime - Normal(snipeDelay, (0.5 / 3));
+        double snipeTime = this->roundEndTime - snipeDelay;
         if (Time < snipeTime)
         {
             Wait(snipeTime - Time);
         }
 
-        Wait(std::max(Normal(0.2, 0.2 / 3), 0.2));
+        Wait(Exponential(0.2)); // Reaction time
+        Wait(Exponential(0.1)); // Network latency
 
         if (Time > this->roundEndTime)
         {
-            printf("[SNIPER No. %lu] missed the auction, sniped at time: %.2f and auction ended at %.2f\n", this->id(), Time, this->roundEndTime);
             Terminate();
         }
 
-        if ((currentPrice + minimalIncrement()) <= valuation && isLeading == false)
+        if ((currentPrice + minimalIncrement()) <= valuation)
         {
+            printf("[SNIPER No. %lu] bidder decided to bid at time: %.2f\n", id(), Time);
             SniperDecidedToBid.Insert(this);
-            // if (SniperBidsProcess->Idle())
-            // {
-            //     SniperBidsProcess->Activate();
-            // }
+            Passivate();
         }
         Terminate();
     }
@@ -344,6 +367,10 @@ class SniperBids : public Process
         while (Time < ItemEndTime)
         {
             Wait(0.1);
+            if (Time >= ItemEndTime)
+            {
+                Passivate();
+            }
             if (!SniperDecidedToBid.Empty())
             {
                 if (!biddingFacility.Busy())
@@ -357,7 +384,7 @@ class SniperBids : public Process
                     }
                     printf("[SNIPER No. %lu] bidder placed a bid at time: %.2f. New price: %.2f\n", SniperDecidedToBid.GetFirst()->id(), Time, currentPrice);
                     lastBidder = SNIPER;
-                    retrunFromQueues();
+                    returnFromQueues();
                     Release(biddingFacility);
                 }
             }
@@ -397,18 +424,21 @@ public:
             // Generate bidder with the given strategy
             if (probability < 0.4)
             {
-                (new AgentBidder(RealPrice * Normal(1.2, 0.5 / 2)))->Activate(); // TODO: V dokumentacii povedat, ze nastavene podla toho, ze ebay v priemere 16 bids na aukciu
+                Process *agenProc = new AgentBidder(RealPrice * Normal(1.2, 0.5 / 2), this->RoundEndTime); // TODO: V dokumentacii povedat, ze nastavene podla toho, ze ebay v priemere 16 bids na aukciu
+                agenProc->Activate();
                 agents++;
             }
             else if (probability < 0.65)
             {
-                (new RatchetBidder(RealPrice * Normal(1.2, 0.5 / 2)))->Activate();
+                Process *ratchetProc = new RatchetBidder(RealPrice * Normal(1.2, 0.5 / 2), this->RoundEndTime);
+                ratchetProc->Activate();
                 ratchets++;
             }
             else
             {
                 // Snipers generally do not want to bid, when the price is high
-                (new SnipingBidder(RealPrice * Normal(1.2, 0.3 / 2), this->RoundEndTime))->Activate();
+                Process *sniperProc = new SnipingBidder(RealPrice * Normal(1.2, 0.3 / 2), this->RoundEndTime);
+                sniperProc->Activate();
                 snipers++;
             }
         }
@@ -433,7 +463,7 @@ public:
         if (!*placed)
         {
             printf("No bids were placed in the first 30 seconds, the item is discarded\n");
-            id->Release(runningAuction);
+            // id->Release(runningAuction);
             id->Cancel();
             winners(NONE);
         }
@@ -477,7 +507,7 @@ public:
         (new BidderGenerator(ItemEndTime, RealPrice))->Activate();
 
         // If there are no bidders in the first 30 seconds, the item is discarded
-        // FirstBidTimeout *firstBidTimeout = new FirstBidTimeout(this, 30, &firstBidPlaced); // TODO: Pomocna fronta miesto boolu
+        FirstBidTimeout *firstBidTimeout = new FirstBidTimeout(this, 30, &firstBidPlaced); // TODO: Pomocna fronta miesto boolu
 
         printf("This auction will end at %.2f\n", ItemEndTime);
         printf("Current time is %.2f\n", Time);
@@ -503,7 +533,8 @@ public:
         AgentBidsProcess->Terminate();
         RatchetBidsProcess->Terminate();
         SniperBidsProcess->Terminate();
-        // delete firstBidTimeout;
+        delete firstBidTimeout;
+        Terminate();
     }
 };
 
@@ -521,6 +552,7 @@ public:
             AuctionItem *item = new AuctionItem();
             item->Activate();
 
+            returnFromQueues();
             // Pause between items
             Wait(60);
 
