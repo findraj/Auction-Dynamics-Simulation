@@ -29,4 +29,4 @@ run: all
 	./$(TARGET)
 
 pack: clean
-	zip xolesa00.zip *.cpp *.h Makefile README.md
+	zip T3_xolesa00_xfindr01.zip Makefile model.cpp doc.pdf
