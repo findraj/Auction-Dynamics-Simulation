@@ -15,18 +15,17 @@ all : clean $(TARGET)
 
 clean:
 	rm -f $(TARGET)
-	rm -f xolesa00.zip
+	rm -f 03_xolesa00_xfindr01.zip
 
 $(TARGET): $(OBJS)
-	$(CXX) $(CFLAGS) -o $(TARGET) $(OBJS) -lsimlib -lm
+	$(CXX) $(CFLAGS) -o $(TARGET) $(OBJS) -l simlib -lm
 	rm -f $(OBJS)
 
 %.o: %.cpp
 	$(CXX) $(CFLAGS) -c $< -o $@
 
 run: all
-	rm -rf analysis/results/auction_detailed_log.csv
 	./$(TARGET)
 
 pack: clean
-	zip T3_xolesa00_xfindr01.zip Makefile model.cpp doc.pdf
+	zip 03_xolesa00_xfindr01.zip Makefile model.cpp doc.pdf
