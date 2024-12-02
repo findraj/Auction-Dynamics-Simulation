@@ -16,8 +16,8 @@
 
 using namespace std;
 
-#define LOGGING true
-#define LOG_STRATEGIES true
+#define LOGGING false
+#define LOG_STRATEGIES false
 
 // Default simulation parameters, can be changed using command line arguments
 int NUMBER_OF_ITEMS = 3460;       // Number of auction items
@@ -82,6 +82,12 @@ void logSingleBid(double bidAmount)
     }
 }
 
+/*
+ * @brief Logs the results of the auction strategies
+ * Function is used for further analysis of the auction
+ *
+ * @return void
+ */
 void logStrategiesResults()
 {
     FILE *logFile = fopen("analysis/results/auction_strategies_results.csv", "a");

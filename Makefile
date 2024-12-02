@@ -11,7 +11,7 @@ TARGET = model
 SRCS = model.cpp
 OBJS = $(SRCS:.cpp=.o)
 
-all : clean $(TARGET)
+all : $(TARGET)
 
 clean:
 	rm -f $(TARGET)
