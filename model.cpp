@@ -17,11 +17,11 @@ using namespace std;
 #define LOGGING true
 
 const double NUMBER_OF_ITEMS = 1000;                      // Number of auction items
-const double NUMBER_OF_BIDDERS = 10;                      // Number of bidders
-double currentPrice = 5.0;                                // Current price of the auction
-double minimalIncrement() { return currentPrice * 0.05; } // Current increment of the auction TODO
+const double NUMBER_OF_BIDDERS = 100;                      // Number of bidders
+double currentPrice = -1;                                // Current price of the auction
+double minimalIncrement() { return currentPrice * 0.01; } // Current increment of the auction TODO
 bool firstBidPlaced = false;                              // Flag if the first bid was placed for an item
-const double SINGLE_ITEM_DURATION = 60.0;                // Duration of a single auction item
+const double SINGLE_ITEM_DURATION = 60.0;                 // Duration of a single auction item
 double ItemEndTime = 0;                                   // End time of the current item
 uint32_t itemNumber = 0;                                  // Statistics
 
@@ -401,7 +401,7 @@ class SniperBids : public Process
     }
 };
 
-class BidderGenerator : public Event
+class BidderGenerator : public Process
 {
 private:
     double RoundEndTime = 0;
@@ -429,6 +429,8 @@ public:
             // Sniping: 35%
             // Follows the reference paper
             double probability = Random();
+
+            Wait(Exponential((SINGLE_ITEM_DURATION / 2) / NUMBER_OF_BIDDERS));
 
             // Generate bidder with the given strategy
             if (probability < 0.4)
