@@ -149,7 +149,6 @@ private:
     bool isLeading = false;
     double patience = 1.0;
     double roundEndTime = 0;
-    double aliveTime = 0;
 
 public:
     /**
@@ -177,14 +176,12 @@ public:
             }
 
             Wait(max(this->patience, 0.2));
-            aliveTime += max(this->patience, 0.2);
 
             // Agents do not engage in bidding in the early stages of the auction
             if (Time > (this->roundEndTime - (Exponential((SINGLE_ITEM_DURATION / 4) * 3))))
             {
                 if ((Random() > this->patience) && ((currentPrice + minimalIncrement()) < this->valuation))
                 {
-                    printf("[AGENT] bidder decided to bid with alive time %.2f\n", aliveTime);
                     Wait(0.1);
                     if (Time >= this->roundEndTime)
                     {
@@ -251,7 +248,6 @@ class AgentBids : public Process
                     }
                     printf("[AGENT] bidder placed a bid at time: %.2f. New price: %.2f\n", Time, currentPrice);
                     lastBidder = AGENT;
-                    printf("Set last bidder to %d\n", lastBidder);
                     returnFromQueues();
                     Release(biddingFacility);
                 }
@@ -284,7 +280,6 @@ private:
     double valuation = 0;    // The maximum price the agent is willing to pay for the item
     bool isLeading = false;  // Whether the bidder is leading the auction
     double patience = 1.0;   // Initial patience
-    double aliveTime = 0;    // TODO
     double roundEndTime = 0; // Prevents bidding after the end of the auction round
 
 public:
@@ -318,12 +313,10 @@ public:
             }
 
             Wait(max(this->patience, 0.2));
-            aliveTime += max(this->patience, 0.2); // TODO
 
             // Check if the bidder should bid
             if ((Random() > this->patience) && ((currentPrice + minimalIncrement()) <= valuation))
             {
-                printf("[RATCHET] bidder decided to bid with alive time %.2f\n", aliveTime);
                 Wait(1);
                 if (Time >= this->roundEndTime)
                 {
@@ -386,7 +379,6 @@ class RatchetBids : public Process
                     }
                     printf("[RATCHET] bidder placed a bid at time: %.2f. New price: %.2f\n", Time, currentPrice);
                     lastBidder = RATCHET;
-                    printf("Set last bidder to %d\n", lastBidder);
                     returnFromQueues();
                     Release(biddingFacility);
                 }
@@ -485,7 +477,6 @@ class SniperBids : public Process
                     }
                     printf("[SNIPER No. %lu] bidder placed a bid at time: %.2f. New price: %.2f\n", SniperDecidedToBid.GetFirst()->id(), Time, currentPrice);
                     lastBidder = SNIPER;
-                    printf("Set last bidder to %d\n", lastBidder);
                     returnFromQueues();
                     Release(biddingFacility);
                 }
@@ -638,7 +629,6 @@ public:
 
         // Reset the last bidder
         lastBidder = NONE;
-        printf("Set last bidder to %d\n", lastBidder);
 
         // Starting price of the item
         currentPrice = RealPrice * Normal(0.8, 0.2);
