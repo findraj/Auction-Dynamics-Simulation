@@ -17,11 +17,11 @@ using namespace std;
 #define LOGGING true
 
 const double NUMBER_OF_ITEMS = 1000;                      // Number of auction items
-const double NUMBER_OF_BIDDERS = 100;                      // Number of bidders
-double currentPrice = -1;                                // Current price of the auction
+const double NUMBER_OF_BIDDERS = 70;                      // Number of bidders
+double currentPrice = -1;                                 // Current price of the auction
 double minimalIncrement() { return currentPrice * 0.01; } // Current increment of the auction TODO
 bool firstBidPlaced = false;                              // Flag if the first bid was placed for an item
-const double SINGLE_ITEM_DURATION = 60.0;                 // Duration of a single auction item
+const double SINGLE_ITEM_DURATION = 120.0;                 // Duration of a single auction item
 double ItemEndTime = 0;                                   // End time of the current item
 uint32_t itemNumber = 0;                                  // Statistics
 
@@ -110,8 +110,8 @@ public:
                 lastUpdateTime = Time; // Update the timestamp
             }
 
-            Wait(std::max(this->patience, 0.2));
-            aliveTime += std::max(this->patience, 0.2);
+            Wait(max(this->patience, 0.2));
+            aliveTime += max(this->patience, 0.2);
 
             // Agents do not engage in bidding in the early stages of the auction
             if (Time > (this->roundEndTime - (Exponential((SINGLE_ITEM_DURATION / 4) * 3))))
@@ -153,13 +153,13 @@ public:
 
         if (normalizedTime < 0.75)
         {
-            this->patience = 1.0 - (Exponential(0.02) * normalizedTime);
+            this->patience = 1.0 - (Exponential(0.01));
         }
         else
         {
             // Exponential decline for the remaining 0.2 over [0.75, 1.0]
             double remainingTime = (normalizedTime - 0.75) / (1.0 - 0.75); // Normalize [0.9, 1.0] to [0, 1]
-            this->patience = 0.99 - 0.2 * pow(remainingTime, 5);           // Start from 0.98 and drop exponentially
+            this->patience = 0.99 - 0.1 * pow(remainingTime, 5);           // Start from 0.98 and drop exponentially
             // printf("Normalized time: %.2f, patience %.2f\n", normalizedTime, this->patience); // TODO: REMOVE
         }
 
@@ -243,8 +243,8 @@ public:
                 lastUpdateTime = Time; // Update the timestamp
             }
 
-            Wait(std::max(this->patience, 0.2));
-            aliveTime += std::max(this->patience, 0.2);
+            Wait(max(this->patience, 0.2));
+            aliveTime += max(this->patience, 0.2);
 
             // Check if they want to bid
             if ((Random() > this->patience) && ((currentPrice + minimalIncrement()) <= valuation))
@@ -282,13 +282,13 @@ public:
         if (normalizedTime < 0.75)
         {
 
-            this->patience = 1.0 - (Exponential(0.02) * normalizedTime);
+            this->patience = 1.0 - (Exponential(0.01));
         }
         else
         {
             // Exponential decline for the remaining 0.2 over [0.75, 1.0]
             double remainingTime = (normalizedTime - 0.75) / (1.0 - 0.75); // Normalize [0.9, 1.0] to [0, 1]
-            this->patience = 0.99 - 0.2 * pow(remainingTime, 5);           // Start from 0.98 and drop exponentially
+            this->patience = 0.99 - 0.1 * pow(remainingTime, 5);           // Start from 0.98 and drop exponentially
         }
     }
 };
@@ -454,6 +454,7 @@ public:
             }
         }
         printf("Generated %d agents, %d ratchets, %d snipers\n", agents, ratchets, snipers);
+        Terminate();
     }
 };
 
