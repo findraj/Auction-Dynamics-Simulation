@@ -20,9 +20,10 @@ using namespace std;
 #define LOG_STRATEGIES true
 
 // Default simulation parameters, can be changed using command line arguments
-int NUMBER_OF_ITEMS = 1000;      // Number of auction items
-int NUMBER_OF_BIDDERS = 70;      // Number of potential bidders for each item
-int SINGLE_ITEM_DURATION = 60.0; // Duration of a single auction item
+int NUMBER_OF_ITEMS = 3460;       // Number of auction items
+double NUMBER_OF_BIDDERS = 70;    // Number of potential bidders for each item
+int SINGLE_ITEM_DURATION = 60;    // Duration of a single auction item
+double AUCTION_ITEM_TIMEOUT = 30; // Timeout for the first bid
 
 // Simulation helping variables
 double currentPrice = -1;                                 // Current price of the auction
@@ -81,7 +82,7 @@ void logSingleBid(double bidAmount)
     }
 }
 
-void logResults()
+void logStrategiesResults()
 {
     FILE *logFile = fopen("analysis/results/auction_strategies_results.csv", "a");
     if (logFile)
@@ -178,7 +179,7 @@ public:
                 if ((Random() > this->patience) && ((currentPrice + minimalIncrement()) < this->valuation))
                 {
                     printf("[AGENT] bidder decided to bid with alive time %.2f\n", aliveTime);
-                    Wait(0.5);
+                    Wait(0.1);
                     if (Time >= this->roundEndTime)
                     {
                         Terminate();
@@ -244,6 +245,7 @@ class AgentBids : public Process
                     }
                     printf("[AGENT] bidder placed a bid at time: %.2f. New price: %.2f\n", Time, currentPrice);
                     lastBidder = AGENT;
+                    printf("Set last bidder to %d\n", lastBidder);
                     returnFromQueues();
                     Release(biddingFacility);
                 }
@@ -378,6 +380,7 @@ class RatchetBids : public Process
                     }
                     printf("[RATCHET] bidder placed a bid at time: %.2f. New price: %.2f\n", Time, currentPrice);
                     lastBidder = RATCHET;
+                    printf("Set last bidder to %d\n", lastBidder);
                     returnFromQueues();
                     Release(biddingFacility);
                 }
@@ -476,6 +479,7 @@ class SniperBids : public Process
                     }
                     printf("[SNIPER No. %lu] bidder placed a bid at time: %.2f. New price: %.2f\n", SniperDecidedToBid.GetFirst()->id(), Time, currentPrice);
                     lastBidder = SNIPER;
+                    printf("Set last bidder to %d\n", lastBidder);
                     returnFromQueues();
                     Release(biddingFacility);
                 }
@@ -525,7 +529,7 @@ public:
         int agents = 0;
         int ratchets = 0;
         int snipers = 0;
-        int roundBidders = max(Exponential(NUMBER_OF_BIDDERS), 0.0);
+        int roundBidders = max(Normal(NUMBER_OF_BIDDERS, NUMBER_OF_BIDDERS / 10 / 3), 0.0);
         for (int i = 0; i < roundBidders; i++)
         {
             // Calculate probability of each strategy
@@ -582,7 +586,7 @@ class FirstBidTimeout : public Event
     bool *placed;
 
 public:
-    FirstBidTimeout(Process *p, double dt, bool *firstBidPlaced) : id(p)
+    FirstBidTimeout(Process *p, int dt, bool *firstBidPlaced) : id(p)
     {
         placed = firstBidPlaced;
         Activate(Time + dt);
@@ -593,7 +597,6 @@ public:
         if (!*placed)
         {
             printf("No bids were placed in the first 30 seconds, the item is discarded\n");
-            // id->Release(runningAuction); // TODO
             id->Cancel();
             winners(NONE);
         }
@@ -621,12 +624,15 @@ public:
         ItemEndTime = Time + SINGLE_ITEM_DURATION;
         itemNumber++;
 
+        firstBidPlaced = false;
+
         // Generate the value of the item
         double RealPrice = Exponential(1000 * Normal(1.0, 0.2));
         printf("Created item with value %.2f\n", RealPrice);
 
         // Reset the last bidder
         lastBidder = NONE;
+        printf("Set last bidder to %d\n", lastBidder);
 
         // Starting price of the item
         currentPrice = RealPrice * Normal(0.8, 0.2);
@@ -645,7 +651,7 @@ public:
         (new BidderGenerator(ItemEndTime, RealPrice))->Activate();
 
         // If there are no bidders in the first 30 seconds, the item is discarded
-        FirstBidTimeout *firstBidTimeout = new FirstBidTimeout(this, 30, &firstBidPlaced);
+        FirstBidTimeout *firstBidTimeout = new FirstBidTimeout(this, AUCTION_ITEM_TIMEOUT, &firstBidPlaced);
 
         printf("This auction will end at %.2f\n", ItemEndTime);
         printf("Current time is %.2f\n", Time);
@@ -718,6 +724,7 @@ int main(int argc, char *argv[])
     int numberOfItems = NUMBER_OF_ITEMS;
     int numberOfBidders = NUMBER_OF_BIDDERS;
     int singleItemDuration = SINGLE_ITEM_DURATION;
+    double auctionItemTimeout = SINGLE_ITEM_DURATION / 2;
 
     // Parse command line arguments
     for (int i = 1; i < argc; i++)
@@ -734,9 +741,13 @@ int main(int argc, char *argv[])
         {
             singleItemDuration = stoi(argv[++i]);
         }
+        else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc)
+        {
+            auctionItemTimeout = stod(argv[++i]);
+        }
         else
         {
-            fprintf(stderr, "Usage: %s [-i number_of_items] [-b number_of_bidders] [-d single_item_duration]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-i number_of_items] [-b number_of_bidders] [-d single_item_duration] [-t auction_item_timeout | '0' to disable]\n", argv[0]);
             return EXIT_FAILURE;
         }
     }
@@ -745,6 +756,14 @@ int main(int argc, char *argv[])
     NUMBER_OF_ITEMS = numberOfItems;
     NUMBER_OF_BIDDERS = numberOfBidders;
     SINGLE_ITEM_DURATION = singleItemDuration;
+    if (auctionItemTimeout == 0)
+    {
+        AUCTION_ITEM_TIMEOUT = SINGLE_ITEM_DURATION;
+    }
+    else
+    {
+        AUCTION_ITEM_TIMEOUT = auctionItemTimeout;
+    }
 
     printf("Starting simulation with %d items, %d bidders, and %.2d seconds per item\n", numberOfItems, numberOfBidders, singleItemDuration);
 
@@ -765,5 +784,8 @@ int main(int argc, char *argv[])
     biddingFacility.Output();
     winners.Output();
     runningAuction.Output();
-    logResults();
+    if (LOG_STRATEGIES)
+    {
+        logStrategiesResults();
+    }
 }
