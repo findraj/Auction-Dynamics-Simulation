@@ -15,6 +15,7 @@
 using namespace std;
 
 #define LOGGING true
+#define LOG_STRATEGIES true
 
 // Simulation parameters
 const double NUMBER_OF_ITEMS = 1000;      // Number of auction items
@@ -77,6 +78,16 @@ void logSingleBid(double bidAmount)
     }
 }
 
+void logResults()
+{
+    FILE *logFile = fopen("analysis/results/auction_results.csv", "a");
+    if (logFile)
+    {
+        fprintf(logFile, "ItemNumber,Winner\n");
+        fclose(logFile);
+    }
+}
+
 /**
  * @brief Funcion gets the first bidder from the queues and activates it
  *
@@ -118,7 +129,7 @@ private:
     double lastUpdateTime = 0;
     const double UPDATE_INTERVAL = SINGLE_ITEM_DURATION / 100;
 
-    double valuation;
+    double valuation = 0;
     bool isLeading = false;
     double patience = 1.0;
     double roundEndTime = 0;
@@ -506,7 +517,7 @@ public:
         int ratchets = 0;
         int snipers = 0;
         int roundBidders = max(Exponential(NUMBER_OF_BIDDERS), 0.0);
-        for (int i = 0; i < NUMBER_OF_BIDDERS; i++)
+        for (int i = 0; i < roundBidders; i++)
         {
             // Calculate probability of each strategy
             // Agent-bidding: 40%
@@ -593,7 +604,6 @@ public:
 class AuctionItem : public Process
 {
 public:
-    bool isSold = false;
     void Behavior()
     {
         Priority = 10;
@@ -638,7 +648,6 @@ public:
         // If a bid was placed, the item is sold
         if (firstBidPlaced)
         {
-            isSold = true;
             printf("Item sold at price %.2f\n", currentPrice);
             printf("Winner: %d\n", lastBidder);
             winners(lastBidder);
