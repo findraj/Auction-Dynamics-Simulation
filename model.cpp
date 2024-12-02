@@ -12,15 +12,17 @@
 #include "simlib.h"
 #include <cstdint>
 #include <vector>
+#include <cstring>
+
 using namespace std;
 
 #define LOGGING true
 #define LOG_STRATEGIES true
 
-// Simulation parameters
-const double NUMBER_OF_ITEMS = 1000;      // Number of auction items
-const double NUMBER_OF_BIDDERS = 70;      // Number of potential bidders for each item
-const double SINGLE_ITEM_DURATION = 60.0; // Duration of a single auction item
+// Default simulation parameters, can be changed using command line arguments
+int NUMBER_OF_ITEMS = 1000;      // Number of auction items
+int NUMBER_OF_BIDDERS = 70;      // Number of potential bidders for each item
+int SINGLE_ITEM_DURATION = 60.0; // Duration of a single auction item
 
 // Simulation helping variables
 double currentPrice = -1;                                 // Current price of the auction
@@ -37,8 +39,9 @@ enum BidderType
 };
 
 // Statistics
-uint32_t itemNumber = 0; // Unique identifier of the item
-int lastBidder = NONE;   // Helper variable for histogram
+int itemNumber = 0;                // Unique identifier of the item
+int lastBidder = NONE;             // Helper variable for histogram
+int winnerStats[4] = {0, 0, 0, 0}; // Agent, Ratchet, Sniper, None
 
 Facility biddingFacility("Bidding process");         // Facility for bidding
 Facility runningAuction("Item auction");             // Facility for running the auction
@@ -80,10 +83,16 @@ void logSingleBid(double bidAmount)
 
 void logResults()
 {
-    FILE *logFile = fopen("analysis/results/auction_results.csv", "a");
+    FILE *logFile = fopen("analysis/results/auction_strategies_results.csv", "a");
     if (logFile)
     {
-        fprintf(logFile, "ItemNumber,Winner\n");
+        fseek(logFile, 0, SEEK_END);
+        if (ftell(logFile) == 0)
+        {
+            fprintf(logFile, "Agent,Ratchet,Sniper,None\n");
+        }
+        // Agent, Ratchet, Sniper, None
+        fprintf(logFile, "%d,%d,%d,%d\n", winnerStats[1], winnerStats[2], winnerStats[3], winnerStats[0]);
         fclose(logFile);
     }
 }
@@ -651,6 +660,7 @@ public:
             printf("Item sold at price %.2f\n", currentPrice);
             printf("Winner: %d\n", lastBidder);
             winners(lastBidder);
+            winnerStats[lastBidder + 1]++;
         }
         else
         {
@@ -702,8 +712,42 @@ public:
 /**
  * @brief Main function of the simulation.
  */
-int main()
+int main(int argc, char *argv[])
 {
+    // Default values for input parameters
+    int numberOfItems = NUMBER_OF_ITEMS;
+    int numberOfBidders = NUMBER_OF_BIDDERS;
+    int singleItemDuration = SINGLE_ITEM_DURATION;
+
+    // Parse command line arguments
+    for (int i = 1; i < argc; i++)
+    {
+        if (strcmp(argv[i], "-i") == 0 && i + 1 < argc)
+        {
+            numberOfItems = stoi(argv[++i]);
+        }
+        else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc)
+        {
+            numberOfBidders = stod(argv[++i]);
+        }
+        else if (strcmp(argv[i], "-d") == 0 && i + 1 < argc)
+        {
+            singleItemDuration = stoi(argv[++i]);
+        }
+        else
+        {
+            fprintf(stderr, "Usage: %s [-i number_of_items] [-b number_of_bidders] [-d single_item_duration]\n", argv[0]);
+            return EXIT_FAILURE;
+        }
+    }
+
+    // Set the simulation parameters
+    NUMBER_OF_ITEMS = numberOfItems;
+    NUMBER_OF_BIDDERS = numberOfBidders;
+    SINGLE_ITEM_DURATION = singleItemDuration;
+
+    printf("Starting simulation with %d items, %d bidders, and %.2d seconds per item\n", numberOfItems, numberOfBidders, singleItemDuration);
+
     // Set a random seed
     RandomSeed(time(NULL));
 
@@ -721,4 +765,5 @@ int main()
     biddingFacility.Output();
     winners.Output();
     runningAuction.Output();
+    logResults();
 }
