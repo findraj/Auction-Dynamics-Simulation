@@ -291,8 +291,8 @@ public:
     {
         this->roundEndTime = roundEndTime;
 
-        // 2% chance of being irrational
-        if (Random() < 0.02)
+        // 5% chance of being irrational
+        if (Random() < 0.05)
         {
             this->valuation = INFINITY;
         }
